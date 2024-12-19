@@ -53,7 +53,8 @@ class SharedEventBuffer:
 class SharedBufferProducer:
     def __init__(self, h5file: Path, shared_ev_buffer: SharedEventBuffer):
         assert h5file.is_file()
-        assert h5file.name.endswith('.h5')
+        assert h5file.suffix in ['.h5', '.hdf5'], f"Unsupported file extension: {h5file.suffix}"
+        
         self.h5f = h5py.File(str(h5file), 'r')
         self._finalizer = weakref.finalize(self, self.close_callback, self.h5f)
 
@@ -64,12 +65,16 @@ class SharedBufferProducer:
         self.read_step = 10**7
 
         self.idx_0 = 0
-        self.num_events = self.h5f['t'].size
+
+        # CD/events にアクセスし、全体のデータサイズを取得
+        self.events_dataset = self.h5f['CD/events']
+        self.num_events = self.events_dataset.shape[0]
 
         self._done = False
 
-        self.t_start_us = self.h5f['t'][0]
-        self.t_end_us = self.h5f['t'][-1]
+        # CD/events のフィールド t の最初と最後の値を取得
+        self.t_start_us = self.events_dataset['t'][0]
+        self.t_end_us = self.events_dataset['t'][-1]
 
     @staticmethod
     def close_callback(h5f: h5py.File):
@@ -84,11 +89,12 @@ class SharedBufferProducer:
         if self._done:
             idx_1 = self.num_events
         if idx_1 > self.idx_0:
+            # CD/events の各フィールドを読み取る
             read_events = Events(
-                    self.h5f['x'][self.idx_0:idx_1],
-                    self.h5f['y'][self.idx_0:idx_1],
-                    self.h5f['p'][self.idx_0:idx_1],
-                    self.h5f['t'][self.idx_0:idx_1])
+                self.events_dataset['x'][self.idx_0:idx_1],
+                self.events_dataset['y'][self.idx_0:idx_1],
+                self.events_dataset['p'][self.idx_0:idx_1].astype(np.uint8),
+                self.events_dataset['t'][self.idx_0:idx_1])
             self.shared_ev_buffer.add_events(read_events)
         self.idx_0 = idx_1
 
